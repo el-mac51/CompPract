@@ -62,11 +62,12 @@ if __name__ == '__main__':
 
 ## Демонстрация работы через терминал
 
-![](кп51.png)
+![](https://github.com/el-mac51/CompPract/blob/main/images/%D0%BA%D0%BF51.png)
 Запуск сервера в терминале
 
-![](кп2.png)
+![](https://github.com/el-mac51/CompPract/blob/main/images/%D0%BA%D0%BF2.png)
 Выполнение Post и Get запросов
 
-![](кп3.png)
+![](https://github.com/el-mac51/CompPract/blob/main/images/%D0%BA%D0%BF3.png)
+
 Результат выполнения в браузере
