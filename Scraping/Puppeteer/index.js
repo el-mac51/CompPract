@@ -1,158 +1,138 @@
 const puppeteer = require('puppeteer');
-const fs = require('fs');
+const fs = require('fs/promises');
 const path = require('path');
 
 const BASE_URL = 'https://atlas.herzen.spb.ru';
-const DELAY = 500;        // 0.5 сек
+const END_PAGE = 54;
+const DELAY = 500;
 const TIMEOUT = 30000;
-const CONCURRENCY = 5;    // 5 параллельных страниц
+const CONCURRENCY = 5;
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36';
 
 const OUT_DIR = __dirname;
 const CSV_PATH = path.join(OUT_DIR, 'puppeteer.csv');
 const LINKS_PATH = path.join(OUT_DIR, 'teachers_links.json');
 
-function sleep(ms) {
-    return new Promise(r => setTimeout(r, ms));
-}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function getTeachersList(page, pageNum) {
-    const url = `${BASE_URL}/teachers?page=${pageNum}`;
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: TIMEOUT });
+    await page.goto(`${BASE_URL}/teachers?page=${pageNum}`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
     return page.evaluate(() => {
-        const teachers = [];
+        const teachers = {};
         document.querySelectorAll('a.text-blue-600').forEach(a => {
             const href = a.getAttribute('href');
             const name = a.innerText.trim();
-            if (href && name && name.length > 3 && href.includes('/teachers/')) {
-                teachers.push({ name, link: href });
+            if (href && name.length > 3 && href.includes('/teachers/')) {
+                teachers[href] = { name, link: href };
             }
         });
-        const seen = new Set();
-        return teachers.filter(t => { if (seen.has(t.link)) return false; seen.add(t.link); return true; });
+        return Object.values(teachers);
     });
 }
 
 async function getTeacherDetails(page, url) {
-    try {
-        // domcontentloaded вместо networkidle2 — быстрее
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
-        await sleep(300); // даём React/Vue отрисовать контакты
-
-        return page.evaluate(() => {
-            const h2 = document.querySelector('h2');
-            const name = h2 ? h2.innerText.trim() : 'Не указано';
-            let email = 'Не указано';
-            let phone = 'Не указано';
-            document.querySelectorAll('h1.text-m').forEach(h1 => {
-                const text = h1.innerText.trim();
-                if (text.includes('@')) email = text;
-                else if (/^[\+78]/.test(text)) phone = text;
-            });
-            return { name, email, phone };
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
+    return page.evaluate(() => {
+        const name = document.querySelector('h2')?.innerText.trim() || 'Не указано';
+        const res = { name, email: 'Не указано', phone: 'Не указано' };
+        document.querySelectorAll('h1.text-m').forEach(h1 => {
+            const t = h1.innerText.trim();
+            if (t.includes('@')) res.email = t;
+            else if (/^[+78]/.test(t)) res.phone = t;
         });
-    } catch (err) {
-        console.error(`  ⚠️ ${url}:`, err.message);
-        return { name: 'Не указано', email: 'Не указано', phone: 'Не указано' };
-    }
+        return res;
+    });
 }
 
 async function loadOrCollectLinks(page) {
-    if (fs.existsSync(LINKS_PATH)) {
-        try {
-            const saved = JSON.parse(fs.readFileSync(LINKS_PATH, 'utf-8'));
-            if (Array.isArray(saved) && saved.length > 0) {
-                console.log(`📂 Загрузка ${saved.length} ссылок...`);
-                return saved;
-            }
-        } catch {}
-    }
+    try {
+        const saved = JSON.parse(await fs.readFile(LINKS_PATH, 'utf-8'));
+        if (Array.isArray(saved) && saved.length > 0) {
+            console.log(`Загрузка ${saved.length} ссылок...`);
+            return saved;
+        }
+    } catch {}
+
     const all = [];
-    for (let i = 1; i <= 54; i++) {
-        console.log(`🔍 Страница ${i}/54...`);
+    for (let i = 1; i <= END_PAGE; i++) {
+        console.log(`🔍 Страница ${i}/${END_PAGE}...`);
         const t = await getTeachersList(page, i);
         all.push(...t);
         console.log(`   Найдено: ${t.length}`);
         await sleep(DELAY);
     }
-    fs.writeFileSync(LINKS_PATH, JSON.stringify(all, null, 2));
-    console.log(`💾 Сохранено ${all.length}`);
+    await fs.writeFile(LINKS_PATH, JSON.stringify(all, null, 2));
+    console.log(`Сохранено ${all.length}`);
     return all;
 }
 
+async function setupPage(browser) {
+    const page = await browser.newPage();
+    await page.setUserAgent(USER_AGENT);
+    await page.setRequestInterception(true);
+    page.on('request', req => {
+        const blocked = ['image', 'stylesheet', 'font', 'media', 'prefetch', 'manifest', 'texttrack'];
+        blocked.includes(req.resourceType()) ? req.abort() : req.continue();
+    });
+    return page;
+}
+
 async function main() {
-    console.log('='.repeat(50));
-    console.log('Скрапинг РГПУ — Puppeteer (ускоренный, 5 страниц)');
-    console.log('='.repeat(50));
+    console.log('='.repeat(50) + '\nСкрапинг РГПУ — Puppeteer (ускоренный, 5 страниц)\n' + '='.repeat(50));
 
     const browser = await puppeteer.launch({
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        args: ['--no-sandbox', '--disable-setuid-sandbox', `--user-agent=${USER_AGENT}`]
     });
 
     try {
-        // Создаем пул из 5 страниц с отключенными картинками/CSS
-        const pages = [];
-        for (let i = 0; i < CONCURRENCY; i++) {
-            const p = await browser.newPage();
-            await p.setUserAgent(
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36'
-            );
-            await p.setRequestInterception(true);
-            p.on('request', req => {
-                const type = req.resourceType();
-                if (['image', 'stylesheet', 'font', 'media'].includes(type)) {
-                    req.abort();
-                } else {
-                    req.continue();
-                }
-            });
-            pages.push(p);
-        }
-
-        // Собираем ссылки (одной страницей)
+        const pages = await Promise.all(Array.from({ length: CONCURRENCY }, () => setupPage(browser)));
         const allTeachers = await loadOrCollectLinks(pages[0]);
 
-        // Уже обработанные
         const processed = new Set();
         let needHeader = true;
-        if (fs.existsSync(CSV_PATH)) {
-            const lines = fs.readFileSync(CSV_PATH, 'utf-8').split('\n').slice(1);
-            lines.forEach(line => { const c = line.split(';'); if (c[3]) processed.add(c[3].trim()); });
+        try {
+            const content = await fs.readFile(CSV_PATH, 'utf-8');
+            content.split('\n').slice(1).forEach(line => {
+                const c = line.split(';');
+                if (c[3]) processed.add(c[3].trim());
+            });
             needHeader = false;
-        }
+        } catch {}
 
         const toProcess = allTeachers.filter(t => !processed.has(t.link));
-        console.log(`⏳ Осталось: ${toProcess.length}`);
+        console.log(`Осталось: ${toProcess.length}`);
+        if (!toProcess.length) return console.log('Все уже обработаны!');
 
-        if (needHeader) fs.writeFileSync(CSV_PATH, '\ufeffname;email;phone;link\n');
+        if (needHeader) await fs.writeFile(CSV_PATH, '\ufeffname;email;phone;link\n');
 
-        // Параллельные воркеры
         let done = 0;
         const total = toProcess.length;
-        const queue = [...toProcess];
+        let idx = 0;
 
         async function runWorker(page) {
-            while (queue.length > 0) {
-                const teacher = queue.shift();
+            while (idx < total) {
+                const teacher = toProcess[idx++];
                 if (!teacher) break;
                 await sleep(DELAY);
                 try {
-                    const d = await getTeacherDetails(page, teacher.link);
-                    fs.appendFileSync(CSV_PATH, `${d.name};${d.email};${d.phone};${teacher.link}\n`);
-                    done++;
-                    console.log(`[${done}/${total}] ${d.name}`);
+                    const d = await getTeacherDetails(page, `${BASE_URL}${teacher.link}`);
+                    await fs.appendFile(CSV_PATH, `${d.name};${d.email};${d.phone};${teacher.link}\n`);
+                    console.log(`[${++done}/${total}] ${d.name}`);
                 } catch (e) {
-                    console.error(`⚠️ ${teacher.name}:`, e.message);
-                    fs.appendFileSync(CSV_PATH, `${teacher.name};Не указано;Не указано;${teacher.link}\n`);
+                    console.error(`${teacher.name}:`, e.message);
+                    await fs.appendFile(CSV_PATH, `${teacher.name};Не указано;Не указано;${teacher.link}\n`);
+                    done++;
                 }
             }
         }
 
-        await Promise.all(pages.map(p => runWorker(p)));
-        console.log('\n✅ Готово! Файл:', CSV_PATH);
+        // Если один воркер упадёт — остальные продолжат
+        await Promise.allSettled(pages.map(p => runWorker(p)));
+        console.log(`\nГотово! Обработано: ${done}. Файл: ${CSV_PATH}`);
     } finally {
         await browser.close();
     }
 }
 
-main().catch(err => { console.error('❌', err); process.exit(1); });
+main().catch(err => { console.error('', err); process.exit(1); });
