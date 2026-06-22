@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 import re
 import csv
 import time
@@ -11,7 +9,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from bs4 import BeautifulSoup
 
-# ==================== КОНФИГУРАЦИЯ ====================
 BASE_URL = "https://atlas.herzen.spb.ru"
 HEADERS = {
     "User-Agent": (
@@ -19,15 +16,13 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     ),
 }
-DELAY = 0.5          # уменьшили с 1.5 до 0.5
+DELAY = 0.5         
 MAX_WORKERS = 5      # 5 параллельных потоков
 TIMEOUT = 30
 
 OUTPUT_DIR = Path(__file__).parent
 CSV_PATH = OUTPUT_DIR / "pythonsoup.csv"
 LINKS_PATH = OUTPUT_DIR / "teachers_links.json"
-# =====================================================
-
 
 def fetch(url: str) -> str | None:
     try:
@@ -35,7 +30,7 @@ def fetch(url: str) -> str | None:
         resp.raise_for_status()
         return resp.text
     except Exception as exc:
-        print(f"  ⚠️ {exc}")
+        print(f" {exc}")
         return None
 
 
@@ -89,16 +84,15 @@ def process_teacher(teacher: dict) -> dict:
         "link": teacher["link"],
     }
 
-
 def load_or_collect_links() -> list[dict]:
     if LINKS_PATH.exists():
-        print("📂 Загрузка ссылок...")
+        print("Загрузка ссылок...")
         with open(LINKS_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
 
     all_t = []
     for page in range(1, 55):
-        print(f"🔍 Страница {page}/54...")
+        print(f"Страница {page}/54...")
         html = fetch(f"{BASE_URL}/teachers?page={page}")
         if html:
             t = parse_list_page(html)
@@ -108,7 +102,7 @@ def load_or_collect_links() -> list[dict]:
 
     with open(LINKS_PATH, "w", encoding="utf-8") as f:
         json.dump(all_t, f, ensure_ascii=False, indent=2)
-    print(f"💾 Сохранено {len(all_t)}")
+    print(f"Сохранено {len(all_t)}")
     return all_t
 
 
@@ -130,9 +124,9 @@ def main():
                     processed.add(row[3].strip())
 
     to_process = [t for t in all_teachers if t["link"] not in processed]
-    print(f"⏳ Осталось: {len(to_process)}")
+    print(f"Осталось: {len(to_process)}")
     if not to_process:
-        print("✅ Все уже обработаны!")
+        print("Все уже обработаны!")
         return
 
     results = []
@@ -144,7 +138,7 @@ def main():
                 results.append(r)
                 print(f"[{i}/{len(to_process)}] {r['name']}")
             except Exception as e:
-                print(f"[{i}/{len(to_process)}] ⚠️ {e}")
+                print(f"[{i}/{len(to_process)}] {e}")
 
     with open(CSV_PATH, "a", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f, delimiter=";")
@@ -153,7 +147,7 @@ def main():
         for r in results:
             w.writerow([r["name"], r["email"], r["phone"], r["link"]])
 
-    print(f"\n✅ Добавлено {len(results)} записей. Файл: {CSV_PATH.resolve()}")
+    print(f"\nДобавлено {len(results)} записей. Файл: {CSV_PATH.resolve()}")
 
 
 if __name__ == "__main__":
