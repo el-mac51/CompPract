@@ -55,7 +55,7 @@ async function loadOrCollectLinks(page) {
 
     const all = [];
     for (let i = 1; i <= END_PAGE; i++) {
-        console.log(`🔍 Страница ${i}/${END_PAGE}...`);
+        console.log(`Страница ${i}/${END_PAGE}...`);
         const t = await getTeachersList(page, i);
         all.push(...t);
         console.log(`   Найдено: ${t.length}`);
@@ -78,7 +78,7 @@ async function setupPage(browser) {
 }
 
 async function main() {
-    console.log('='.repeat(50) + '\nСкрапинг РГПУ — Puppeteer (ускоренный, 5 страниц)\n' + '='.repeat(50));
+    console.log('='.repeat(50) + '\nСкрапинг РГПУ — Puppeteer\n' + '='.repeat(50));
 
     const browser = await puppeteer.launch({
         headless: true,
@@ -127,7 +127,6 @@ async function main() {
             }
         }
 
-        // Если один воркер упадёт — остальные продолжат
         await Promise.allSettled(pages.map(p => runWorker(p)));
         console.log(`\nГотово! Обработано: ${done}. Файл: ${CSV_PATH}`);
     } finally {
